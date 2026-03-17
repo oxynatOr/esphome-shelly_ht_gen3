@@ -160,6 +160,7 @@ class ShellyHTDisplay : public PollingComponent {
   sensor::Sensor *batt_sensor_{nullptr};
   sensor::Sensor *wifi_sensor_{nullptr};
   time::RealTimeClock *time_{nullptr};
+  deep_sleep::DeepSleepComponent *deep_sleep_{nullptr};
 
   // Display state (what's currently shown)
   int disp_temp_{-999};
