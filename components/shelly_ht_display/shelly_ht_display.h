@@ -96,13 +96,6 @@ class ShellyHTDisplay : public PollingComponent {
   // on_update trigger: fires after framebuffer is built, before commit
   Trigger<> *get_on_update_trigger() { return &this->on_update_trigger_; }
 
-  // Sensor references
-  void set_temperature_sensor(sensor::Sensor *s) { this->temp_sensor_ = s; }
-  void set_humidity_sensor(sensor::Sensor *s) { this->humi_sensor_ = s; }
-  void set_battery_sensor(sensor::Sensor *s) { this->batt_sensor_ = s; }
-  void set_wifi_signal_sensor(sensor::Sensor *s) { this->wifi_sensor_ = s; }
-  void set_time(time::RealTimeClock *t) { this->time_ = t; }
-
   // ── High-level display API (usable from lambdas) ─────────────
 
   void show_temperature(float temp_c, bool fahrenheit = false);

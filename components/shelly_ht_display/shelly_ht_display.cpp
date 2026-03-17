@@ -9,11 +9,11 @@
 namespace esphome {
 namespace uc8119 {
 
-static const char *const TAG = "shelly_ht";
+static const char *const TAG = "shelly_ht_g3";
 
 
 void ShellyHTDisplay::setup() {
-  ESP_LOGI(TAG, "Shelly H&T display layer ready (%s, auto-detected)",
+  ESP_LOGI(TAG, "Shelly H&T Gen3 display layer ready (%s, auto-detected)",
            this->deep_sleep_mode_ ? "deep-sleep" : "always-on");
   this->last_check_ms_ = millis();
 }
