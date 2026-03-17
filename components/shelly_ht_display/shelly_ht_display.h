@@ -137,6 +137,7 @@ class ShellyHTDisplay : public PollingComponent {
  protected:
   UC8119 *display_{nullptr};
   uint32_t check_interval_ms_{1000};
+  bool deep_sleep_mode_{false};
   bool usb_powered_{false};
   SegmentFont font_{FONT_SIEKOO};
   bool ota_active_{false};       // Runtime: USB detected, deep sleep prevented
