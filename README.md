@@ -26,7 +26,8 @@
 <br />
 <h1 align="center">Shelly H&T Gen3 <sup>WIP</sup></h1>
 
-Battery-powered WiFi temperature/humidity sensor with a segment E-Paper display (UC8119 controller). Uses an ESP32-C3 with 8MB flash, a Sensirion SHT31 sensor, and a UltraChip UC8119 E-Paper segment display with 91 active segments (10 digits + 13 icons).
+Battery-powered WiFi temperature/humidity sensor with a segment E-Paper display (UC8119 controller). 
+Uses an ESP32-C3 with 8MB flash, a Sensirion SHT31 sensor, and a UltraChip UC8119 E-Paper segment display with 91 active segments (10 digits + 13 icons).
 
 Requires a custom ESPHome external component for the UC8119 display — the first open-source driver for this chip.
 
