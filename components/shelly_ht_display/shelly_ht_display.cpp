@@ -9,32 +9,69 @@
 namespace esphome {
 namespace uc8119 {
 
-static const char *const TAG = "shelly_ht";
+static const char *const TAG = "shelly_ht_g3";
+
 
 void ShellyHTDisplay::setup() {
-  ESP_LOGI(TAG, "Shelly H&T display layer ready");
+  ESP_LOGI(TAG, "Shelly H&T Gen3 display layer ready (%s, auto-detected)",
+           this->deep_sleep_mode_ ? "deep-sleep" : "always-on");
   this->last_check_ms_ = millis();
 }
 
 void ShellyHTDisplay::loop() {
   if (!this->display_ || !this->display_->is_ready()) return;
+
+  /* TODO: USB detection: override deep-sleep at runtime
+  if (this->deep_sleep_mode_ && !this->usb_powered_ &&
+      this->batt_sensor_ && this->batt_sensor_->has_state()) {
+    float v = this->batt_sensor_->state;
+    if (v < USB_DETECT_VOLTAGE) {
+      ESP_LOGI(TAG, "USB power detected (battery=%.1fV < %.1fV) — switching to always-on mode",
+               v, USB_DETECT_VOLTAGE);
+      this->usb_powered_ = true;
+      this->deep_sleep_mode_ = false;
+#ifdef USE_DEEP_SLEEP
+      if (this->deep_sleep_ != nullptr) {
+        this->deep_sleep_->prevent_deep_sleep();
+        ESP_LOGI(TAG, "Deep sleep prevented");
+      }
+#endif
+      this->force_refresh();
+    }
+  }
+    if (this->deep_sleep_mode_) return;
+*/  
   uint32_t now = millis();
-
   if (now - this->last_check_ms_ < this->check_interval_ms_) return;
-
   this->last_check_ms_ = now;
-  this->check_and_update_();
 
+  this->check_and_update_();
 }
 
+
 void ShellyHTDisplay::dump_config() {
-  ESP_LOGCONFIG(TAG, "Shelly H&T Gen3 Display:");  
+  ESP_LOGCONFIG(TAG, "Shelly H&T Gen3 Display:");
+  ESP_LOGCONFIG(TAG, "  Mode: %s (auto-detected from YAML)", this->deep_sleep_mode_ ? "deep-sleep" : "always-on");
   ESP_LOGCONFIG(TAG, "  Font: %s", this->font_ == FONT_SIEKOO ? "siekoo" : "classic");
   ESP_LOGCONFIG(TAG, "  Check interval: %ums", this->check_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Sensors: temp=%s humi=%s batt=%s wifi=%s time=%s",
     this->temp_sensor_ ? "yes" : "no", this->humi_sensor_ ? "yes" : "no",
     this->batt_sensor_ ? "yes" : "no", this->wifi_sensor_ ? "yes" : "no",
     this->time_ ? "yes" : "no");
+  ESP_LOGCONFIG(TAG, "  Icon overrides: frost=%s heating=%s vent=%s bt=%s globe=%s cal=%s arrow=%s",
+    this->frost_sensor_ ? "ext" : "def", this->heating_sensor_ ? "ext" : "def",
+    this->ventilator_sensor_ ? "ext" : "def", this->bluetooth_sensor_ ? "ext" : "def",
+    this->globe_sensor_ ? "ext" : "def", this->calendar_sensor_ ? "ext" : "def",
+    this->arrow_sensor_ ? "ext" : "def");
+}
+
+// ── Icon state helper ───────────────────────────────────────────
+
+bool ShellyHTDisplay::get_icon_state_(binary_sensor::BinarySensor *ext, bool default_val) {
+  // External sensor overrides default if configured and has a state
+  if (ext != nullptr && ext->has_state())
+    return ext->state;
+  return default_val;
 }
 
 // ── 7-segment helpers ───────────────────────────────────────────
@@ -124,12 +161,12 @@ void ShellyHTDisplay::show_text_clock(const char *t) {
     this->write_digit_(*d[i], this->char_to_seg7_((t && t[i]) ? t[i] : ' '));
 }
 
+// ── Icons ───────────────────────────────────────────────────────
+
 void ShellyHTDisplay::show_battery(uint8_t l) {
-  // Hide battery icon only when USB-powered (no battery present)
-  // Show in all other cases: deep-sleep with battery, always-on with battery
   if (this->usb_powered_) return;
   if (l > 5) l = 5;
-  this->display_->set_segment(SEG_BATT[4], true);  // Frame always on
+  this->display_->set_segment(SEG_BATT[4], true);
   for (int i = 0; i < 4; i++) this->display_->set_segment(SEG_BATT[i], l >= (i + 1));
 }
 
@@ -148,7 +185,7 @@ void ShellyHTDisplay::show_arrow(bool on)     { this->display_->set_segment(SEG_
 void ShellyHTDisplay::show_dp(bool on)        { this->display_->set_segment(SEG_DP, on); }
 void ShellyHTDisplay::show_degree(bool on)    { this->display_->set_segment(SEG_GRAD, on); }
 void ShellyHTDisplay::show_percent(bool on)   { this->display_->set_segment(SEG_PROZENT, on); }
-void ShellyHTDisplay::show_unit(char c)       { this->write_digit_(DIG_UNIT, this->char_to_seg7_(c)); }
+void ShellyHTDisplay::show_unit(char u)       { this->write_digit_(DIG_UNIT, this->char_to_seg7_(u)); }
 
 void ShellyHTDisplay::show_colon(bool on) {
   // Bit 38 = upper + lower dot (real colon)
@@ -173,12 +210,16 @@ void ShellyHTDisplay::check_and_update_() {
     auto now = this->time_->now();
     if (now.is_valid()) { new_hour = now.hour; new_min = now.minute; }
   }
+
   int new_bars = 0;
-  if (this->wifi_sensor_ && this->wifi_sensor_->has_state()) {
+  if (wifi::global_wifi_component->is_connected() && this->wifi_sensor_ && this->wifi_sensor_->has_state()) {
     float rssi = this->wifi_sensor_->state;
     if (rssi > -50) new_bars = 4; else if (rssi > -65) new_bars = 3;
     else if (rssi > -75) new_bars = 2; else if (rssi > -85) new_bars = 1;
   }
+
+  //TODO: Show BT Icon.
+
   uint8_t level = 0;
   if (this->batt_sensor_ && this->batt_sensor_->has_state()) {
     float v = this->batt_sensor_->state;    
@@ -186,27 +227,50 @@ void ShellyHTDisplay::check_and_update_() {
     else if (v > 5.0f) level = 3; else if (v > 4.6f) level = 2;
     else if (v > 4.2f) level = 1;    
   }
-  bool new_wifi = wifi::global_wifi_component->is_connected();
-  bool new_frost = this->temp_sensor_->state < 3.0f;
+  
+  // Icon states: external sensor overrides built-in default
+  bool def_wifi = wifi::global_wifi_component->is_connected();
+  bool def_frost = this->temp_sensor_->state < 3.0f;
+
+  bool new_frost    = this->get_icon_state_(this->frost_sensor_, def_frost);
+  bool new_heating  = this->get_icon_state_(this->heating_sensor_, false);
+  bool new_vent     = this->get_icon_state_(this->ventilator_sensor_, false);
+  bool new_bt       = this->get_icon_state_(this->bluetooth_sensor_, false);
+  bool new_wifi     = this->get_icon_state_(this->globe_sensor_, def_wifi);
+  bool new_calendar = this->get_icon_state_(this->calendar_sensor_, false);
+  bool new_arrow    = this->get_icon_state_(this->arrow_sensor_, false);
 
   // Changed?
-  bool changed = (new_temp != this->disp_temp_) || (new_humi != this->disp_humi_) ||
-                 (new_hour != this->disp_hour_) || (new_min  != this->disp_min_)  ||
-                 (new_bars != this->disp_bars_) || (new_wifi != this->disp_wifi_) ||
-                 (new_frost!= this->disp_frost_);
+  bool changed = (new_temp     != this->disp_temp_)     ||
+                 (new_humi     != this->disp_humi_)     ||
+                 (new_hour     != this->disp_hour_)     ||
+                 (new_min      != this->disp_min_)      ||
+                 (new_bars     != this->disp_bars_)     ||
+                 (new_wifi     != this->disp_wifi_)     ||
+                 (new_frost    != this->disp_frost_)    ||
+                 (new_heating  != this->disp_heating_)  ||
+                 (new_vent     != this->disp_vent_)     ||
+                 (new_bt       != this->disp_bt_)       ||
+                 (new_calendar != this->disp_calendar_) ||
+                 (new_arrow    != this->disp_arrow_);
 
   if (!changed) return;
-
-  ESP_LOGD(TAG, "Update: %.1f°C %d%% %02d:%02d sig:%d wifi:%d frost:%d battery:%d",
-           new_temp / 10.0f, new_humi, new_hour, new_min, new_bars, new_wifi, new_frost, level);
-
-  this->disp_temp_ = new_temp; 
+  ESP_LOGI(TAG, "Update: %.1f°C %d%% %02d:%02d sig:%d wifi:%d frost:%d heat:%d vent:%d bt:%d cal:%d arr:%d battery:%d",
+           new_temp / 10.0f, new_humi, new_hour, new_min, new_bars,
+           new_wifi, new_frost, new_heating, new_vent, new_bt, new_calendar, new_arrow, level);           
+  // Save states
+  this->disp_temp_ = new_temp;
   this->disp_humi_ = new_humi;
-  this->disp_hour_ = new_hour; 
+  this->disp_hour_ = new_hour;
   this->disp_min_  = new_min;
-  this->disp_bars_ = new_bars; 
+  this->disp_bars_ = new_bars;
   this->disp_wifi_ = new_wifi;
   this->disp_frost_ = new_frost;
+  this->disp_heating_ = new_heating;
+  this->disp_vent_ = new_vent;
+  this->disp_bt_ = new_bt;
+  this->disp_calendar_ = new_calendar; 
+  this->disp_arrow_ = new_arrow;
 
   // Build framebuffer
   this->display_->clear();
@@ -214,11 +278,23 @@ void ShellyHTDisplay::check_and_update_() {
   this->show_humidity(new_humi);
   if (new_hour >= 0) this->show_time(new_hour, new_min);
   this->show_signal(new_bars);
+
+  // Icons
   this->show_globe(new_wifi);
   this->show_frost(new_frost);
+  this->show_heating(new_heating);
+  this->show_ventilator(new_vent);
+  this->show_bluetooth(new_bt);
+  this->show_calendar(new_calendar);
+  this->show_arrow(new_arrow);
   this->show_battery(level);
 
+  // Fire on_update trigger — lambda can override any icon/segment before commit
+  this->on_update_trigger_.trigger();
+
+  // Commit (refresh only if framebuffer actually changed)
   this->display_->commit();
+
 }
 
 

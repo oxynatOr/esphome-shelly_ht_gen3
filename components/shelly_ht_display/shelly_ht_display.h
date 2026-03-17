@@ -6,7 +6,9 @@
 // Uses UC8119 driver for low-level display access.
 
 #include "esphome/core/component.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/time/real_time_clock.h"
 #include "../uc8119/uc8119.h"
 #include "../uc8119/siekoo.h"
@@ -73,12 +75,26 @@ class ShellyHTDisplay : public PollingComponent {
   void set_font(SegmentFont f) { this->font_ = f; }
   void set_usb_powered(bool p) { this->usb_powered_ = p;}
 
-  // Sensor references
+  // Analog sensor references
   void set_temperature_sensor(sensor::Sensor *s) { this->temp_sensor_ = s; }
   void set_humidity_sensor(sensor::Sensor *s) { this->humi_sensor_ = s; }
   void set_battery_sensor(sensor::Sensor *s) { this->batt_sensor_ = s; }
   void set_wifi_signal_sensor(sensor::Sensor *s) { this->wifi_sensor_ = s; }
   void set_time(time::RealTimeClock *t) { this->time_ = t; }
+  void set_deep_sleep_component(deep_sleep::DeepSleepComponent *ds) { this->deep_sleep_ = ds; }
+
+  // Icon binary_sensor overrides
+  // When set, the icon follows the external sensor instead of the built-in default.
+  void set_frost_sensor(binary_sensor::BinarySensor *s) { this->frost_sensor_ = s; }
+  void set_heating_sensor(binary_sensor::BinarySensor *s) { this->heating_sensor_ = s; }
+  void set_ventilator_sensor(binary_sensor::BinarySensor *s) { this->ventilator_sensor_ = s; }
+  void set_bluetooth_sensor(binary_sensor::BinarySensor *s) { this->bluetooth_sensor_ = s; }
+  void set_globe_sensor(binary_sensor::BinarySensor *s) { this->globe_sensor_ = s; }
+  void set_calendar_sensor(binary_sensor::BinarySensor *s) { this->calendar_sensor_ = s; }
+  void set_arrow_sensor(binary_sensor::BinarySensor *s) { this->arrow_sensor_ = s; }
+
+  // on_update trigger: fires after framebuffer is built, before commit
+  Trigger<> *get_on_update_trigger() { return &this->on_update_trigger_; }
 
   // ── High-level display API (usable from lambdas) ─────────────
 
@@ -121,9 +137,22 @@ class ShellyHTDisplay : public PollingComponent {
  protected:
   UC8119 *display_{nullptr};
   uint32_t check_interval_ms_{1000};
+  bool deep_sleep_mode_{false};
   bool usb_powered_{false};
   SegmentFont font_{FONT_SIEKOO};
   bool ota_active_{false};       // Runtime: USB detected, deep sleep prevented
+
+  // Icon binary_sensor overrides (nullptr = use built-in default)
+  binary_sensor::BinarySensor *frost_sensor_{nullptr};
+  binary_sensor::BinarySensor *heating_sensor_{nullptr};
+  binary_sensor::BinarySensor *ventilator_sensor_{nullptr};
+  binary_sensor::BinarySensor *bluetooth_sensor_{nullptr};
+  binary_sensor::BinarySensor *globe_sensor_{nullptr};
+  binary_sensor::BinarySensor *calendar_sensor_{nullptr};
+  binary_sensor::BinarySensor *arrow_sensor_{nullptr};
+
+  // on_update trigger
+  Trigger<> on_update_trigger_;
 
   // Sensor references
   sensor::Sensor *temp_sensor_{nullptr};
@@ -131,6 +160,7 @@ class ShellyHTDisplay : public PollingComponent {
   sensor::Sensor *batt_sensor_{nullptr};
   sensor::Sensor *wifi_sensor_{nullptr};
   time::RealTimeClock *time_{nullptr};
+  deep_sleep::DeepSleepComponent *deep_sleep_{nullptr};
 
   // Display state (what's currently shown)
   int disp_temp_{-999};
@@ -140,7 +170,11 @@ class ShellyHTDisplay : public PollingComponent {
   int disp_bars_{-1};
   bool disp_wifi_{false};
   bool disp_frost_{false};
-
+  bool disp_heating_{false};
+  bool disp_vent_{false};
+  bool disp_bt_{false};
+  bool disp_calendar_{false};
+  bool disp_arrow_{false};
   uint32_t last_check_ms_{0};
 
   // Internal
@@ -148,6 +182,8 @@ class ShellyHTDisplay : public PollingComponent {
   void write_digit_(const DigitMap &d, uint8_t code);
   void write_number_(const DigitMap &d, int8_t n);
   uint8_t char_to_seg7_(char c);
+  // Read icon state: external sensor if set, otherwise default
+  bool get_icon_state_(binary_sensor::BinarySensor *ext, bool default_val);
 };
 
 }  // namespace uc8119
