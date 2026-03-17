@@ -11,6 +11,32 @@ namespace uc8119 {
 
 static const char *const TAG = "shelly_ht";
 
+void ShellyHTDisplay::setup() {
+  ESP_LOGI(TAG, "Shelly H&T display layer ready");
+  this->last_check_ms_ = millis();
+}
+
+void ShellyHTDisplay::loop() {
+  if (!this->display_ || !this->display_->is_ready()) return;
+  uint32_t now = millis();
+
+  if (now - this->last_check_ms_ < this->check_interval_ms_) return;
+
+  this->last_check_ms_ = now;
+  this->check_and_update_();
+
+}
+
+void ShellyHTDisplay::dump_config() {
+  ESP_LOGCONFIG(TAG, "Shelly H&T Gen3 Display:");  
+  ESP_LOGCONFIG(TAG, "  Font: %s", this->font_ == FONT_SIEKOO ? "siekoo" : "classic");
+  ESP_LOGCONFIG(TAG, "  Check interval: %ums", this->check_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Sensors: temp=%s humi=%s batt=%s wifi=%s time=%s",
+    this->temp_sensor_ ? "yes" : "no", this->humi_sensor_ ? "yes" : "no",
+    this->batt_sensor_ ? "yes" : "no", this->wifi_sensor_ ? "yes" : "no",
+    this->time_ ? "yes" : "no");
+}
+
 // ── 7-segment helpers ───────────────────────────────────────────
 
 void ShellyHTDisplay::write_digit_(const DigitMap &d, uint8_t c) {
@@ -102,7 +128,6 @@ void ShellyHTDisplay::show_battery(uint8_t l) {
   // Hide battery icon only when USB-powered (no battery present)
   // Show in all other cases: deep-sleep with battery, always-on with battery
   if (this->usb_powered_) return;
-  //if (!this->batt_sensor_ && !this->batt_sensor_->has_state()) return;
   if (l > 5) l = 5;
   this->display_->set_segment(SEG_BATT[4], true);  // Frame always on
   for (int i = 0; i < 4; i++) this->display_->set_segment(SEG_BATT[i], l >= (i + 1));
@@ -130,6 +155,72 @@ void ShellyHTDisplay::show_colon(bool on) {
   // Bit 130 = middle dot (DO NOT use — creates unwanted 3rd dot)
   this->display_->set_segment(SEG_COL_TOP, on);
 }
+
+// ── Internal state machine ──────────────────────────────────────
+
+void ShellyHTDisplay::check_and_update_() {
+  if (this->ota_active_) return;  // Display locked during OTA
+
+  bool has_t = this->temp_sensor_ && this->temp_sensor_->has_state();
+  bool has_h = this->humi_sensor_ && this->humi_sensor_->has_state();
+  if (!has_t || !has_h) return;
+
+  // Read current values (RAM only, no I2C)
+  int new_temp = (int)roundf(this->temp_sensor_->state * 10.0f);
+  int new_humi = (int)this->humi_sensor_->state;
+  int new_hour = -1, new_min = -1;
+  if (this->time_) {
+    auto now = this->time_->now();
+    if (now.is_valid()) { new_hour = now.hour; new_min = now.minute; }
+  }
+  int new_bars = 0;
+  if (this->wifi_sensor_ && this->wifi_sensor_->has_state()) {
+    float rssi = this->wifi_sensor_->state;
+    if (rssi > -50) new_bars = 4; else if (rssi > -65) new_bars = 3;
+    else if (rssi > -75) new_bars = 2; else if (rssi > -85) new_bars = 1;
+  }
+  if (this->batt_sensor_ && this->batt_sensor_->has_state()) {
+    float v = this->batt_sensor_->state;
+    uint8_t level = 0;
+    if (v > 5.8f) level = 5; else if (v > 5.4f) level = 4;
+    else if (v > 5.0f) level = 3; else if (v > 4.6f) level = 2;
+    else if (v > 4.2f) level = 1;    
+  }
+  bool new_wifi = wifi::global_wifi_component->is_connected();
+  bool new_frost = this->temp_sensor_->state < 3.0f;
+
+  // Changed?
+  bool changed = (new_temp != this->disp_temp_) || (new_humi != this->disp_humi_) ||
+                 (new_hour != this->disp_hour_) || (new_min  != this->disp_min_)  ||
+                 (new_bars != this->disp_bars_) || (new_wifi != this->disp_wifi_) ||
+                 (new_frost!= this->disp_frost_);
+
+  if (!changed) return;
+
+  ESP_LOGD(TAG, "Update: %.1f°C %d%% %02d:%02d sig:%d wifi:%d frost:%d battery:%d",
+           new_temp / 10.0f, new_humi, new_hour, new_min, new_bars, new_wifi, new_frost, level);
+
+  this->disp_temp_ = new_temp; 
+  this->disp_humi_ = new_humi;
+  this->disp_hour_ = new_hour; 
+  this->disp_min_  = new_min;
+  this->disp_bars_ = new_bars; 
+  this->disp_wifi_ = new_wifi;
+  this->disp_frost_ = new_frost;
+
+  // Build framebuffer
+  this->display_->clear();
+  this->show_temperature(this->temp_sensor_->state, false);
+  this->show_humidity(new_humi);
+  if (new_hour >= 0) this->show_time(new_hour, new_min);
+  this->show_signal(new_bars);
+  this->show_globe(new_wifi);
+  this->show_frost(new_frost);
+  this->show_battery(level);
+
+  this->display_->commit();
+}
+
 
 // ── OTA progress display ────────────────────────────────────────
 
@@ -176,93 +267,6 @@ void ShellyHTDisplay::show_ota_error() {
   this->force_refresh();
 }
 
-// ── Internal state machine ──────────────────────────────────────
-
-void ShellyHTDisplay::check_and_update_() {
-  if (this->ota_active_) return;  // Display locked during OTA
-
-  bool has_t = this->temp_sensor_ && this->temp_sensor_->has_state();
-  bool has_h = this->humi_sensor_ && this->humi_sensor_->has_state();
-  if (!has_t || !has_h) return;
-
-  // Read current values (RAM only, no I2C)
-  int new_temp = (int)roundf(this->temp_sensor_->state * 10.0f);
-  int new_humi = (int)this->humi_sensor_->state;
-  int new_hour = -1, new_min = -1;
-  if (this->time_) {
-    auto now = this->time_->now();
-    if (now.is_valid()) { new_hour = now.hour; new_min = now.minute; }
-  }
-  int new_bars = 0;
-  if (this->wifi_sensor_ && this->wifi_sensor_->has_state()) {
-    float rssi = this->wifi_sensor_->state;
-    if (rssi > -50) new_bars = 4; else if (rssi > -65) new_bars = 3;
-    else if (rssi > -75) new_bars = 2; else if (rssi > -85) new_bars = 1;
-  }
-  bool new_wifi = wifi::global_wifi_component->is_connected();
-  bool new_frost = this->temp_sensor_->state < 3.0f;
-
-  // Changed?
-  bool changed = (new_temp != this->disp_temp_) || (new_humi != this->disp_humi_) ||
-                 (new_hour != this->disp_hour_) || (new_min  != this->disp_min_)  ||
-                 (new_bars != this->disp_bars_) || (new_wifi != this->disp_wifi_) ||
-                 (new_frost!= this->disp_frost_);
-
-  if (!changed) return;
-
-  ESP_LOGD(TAG, "Update: %.1f°C %d%% %02d:%02d sig:%d wifi:%d frost:%d",
-           new_temp / 10.0f, new_humi, new_hour, new_min, new_bars, new_wifi, new_frost);
-
-  this->disp_temp_ = new_temp; this->disp_humi_ = new_humi;
-  this->disp_hour_ = new_hour; this->disp_min_  = new_min;
-  this->disp_bars_ = new_bars; this->disp_wifi_ = new_wifi;
-  this->disp_frost_ = new_frost;
-
-  // Build framebuffer
-  this->display_->clear();
-  this->show_temperature(this->temp_sensor_->state, false);
-  this->show_humidity(new_humi);
-  if (new_hour >= 0) this->show_time(new_hour, new_min);
-  this->show_signal(new_bars);
-  this->show_globe(new_wifi);
-  this->show_frost(new_frost);
-
-  if (this->batt_sensor_ && this->batt_sensor_->has_state()) {
-    float v = this->batt_sensor_->state;
-    uint8_t level = 0;
-    if (v > 5.8f) level = 5; else if (v > 5.4f) level = 4;
-    else if (v > 5.0f) level = 3; else if (v > 4.6f) level = 2;
-    else if (v > 4.2f) level = 1;
-    this->show_battery(level);
-  }
-
-  this->display_->commit();
-}
-
-void ShellyHTDisplay::setup() {
-  ESP_LOGI(TAG, "Shelly H&T display layer ready");
-  this->last_check_ms_ = millis();
-}
-
-void ShellyHTDisplay::loop() {
-  if (!this->display_ || !this->display_->is_ready()) return;
-  uint32_t now = millis();
-
-  if (now - this->last_check_ms_ < this->check_interval_ms_) return;
-  this->last_check_ms_ = now;
-
-  this->check_and_update_();
-}
-
-void ShellyHTDisplay::dump_config() {
-  ESP_LOGCONFIG(TAG, "Shelly H&T Gen3 Display:");  
-  ESP_LOGCONFIG(TAG, "  Font: %s", this->font_ == FONT_SIEKOO ? "siekoo" : "classic");
-  ESP_LOGCONFIG(TAG, "  Check interval: %ums", this->check_interval_ms_);
-  ESP_LOGCONFIG(TAG, "  Sensors: temp=%s humi=%s batt=%s wifi=%s time=%s",
-    this->temp_sensor_ ? "yes" : "no", this->humi_sensor_ ? "yes" : "no",
-    this->batt_sensor_ ? "yes" : "no", this->wifi_sensor_ ? "yes" : "no",
-    this->time_ ? "yes" : "no");
-}
 
 }  // namespace uc8119
 }  // namespace esphome
