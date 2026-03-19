@@ -18,15 +18,12 @@ namespace uc8119 {
 
 static const char *const TAG = "shelly_ht";
 
-static const float USB_DETECT_VOLTAGE = 1.0f;
-
 // ── RTC time tracking ───────────────────────────────────────────
 
 void ShellyHTDisplay::save_time_to_rtc_() {
   if (this->disp_hour_ < 0) return;
   rtc_saved_hour = this->disp_hour_;
   rtc_saved_min = this->disp_min_;
-  rtc_wake_count = rtc_wake_count;  // Already incremented in setup
   rtc_time_magic = RTC_TIME_MAGIC;
   ESP_LOGD(TAG, "Time saved to RTC: %02d:%02d (cycle %u)", rtc_saved_hour, rtc_saved_min, rtc_wake_count);
 }
@@ -142,11 +139,10 @@ void ShellyHTDisplay::show_text_clock(const char *t) {
 // ── Icons ───────────────────────────────────────────────────────
 
 void ShellyHTDisplay::show_battery(uint8_t l) {
+  // Hide battery icon when USB powered
   if (this->usb_powered_) return;
-  if (this->batt_sensor_ && this->batt_sensor_->has_state() &&
-      this->batt_sensor_->state < USB_DETECT_VOLTAGE) return;
   if (l > 5) l = 5;
-  this->display_->set_segment(SEG_BATT[4], true);
+  this->display_->set_segment(SEG_BATT[4], true);  // Frame always on
   for (int i = 0; i < 4; i++) this->display_->set_segment(SEG_BATT[i], l >= (i + 1));
 }
 
@@ -240,7 +236,6 @@ void ShellyHTDisplay::check_and_update_() {
     if (now.is_valid()) {
       new_hour = now.hour;
       new_min = now.minute;
-      // Save synced time to RTC for next non-WiFi wake
       this->save_time_to_rtc_();
     }
   }
@@ -257,7 +252,7 @@ void ShellyHTDisplay::check_and_update_() {
     new_wifi = wifi::global_wifi_component->is_connected();
   }
 
-  // Icon states: external sensor overrides built-in default
+  // Icon states
   bool def_frost = this->temp_sensor_->state < 3.0f;
 
   bool new_frost    = this->get_icon_state_(this->frost_sensor_, def_frost);
@@ -288,7 +283,6 @@ void ShellyHTDisplay::check_and_update_() {
            new_temp / 10.0f, new_humi, new_hour, new_min, new_bars,
            new_wifi, new_frost, this->wifi_skipped_ ? " [no-wifi]" : "");
 
-  // Save states
   this->disp_temp_ = new_temp;       this->disp_humi_ = new_humi;
   this->disp_hour_ = new_hour;       this->disp_min_  = new_min;
   this->disp_bars_ = new_bars;       this->disp_wifi_ = new_wifi;
@@ -312,14 +306,9 @@ void ShellyHTDisplay::check_and_update_() {
   this->show_calendar(new_calendar);
   this->show_arrow(new_arrow);
 
-  // Battery
-  if (this->batt_sensor_ && this->batt_sensor_->has_state()) {
-    float v = this->batt_sensor_->state;
-    uint8_t level = 0;
-    if (v > 5.8f) level = 5; else if (v > 5.4f) level = 4;
-    else if (v > 5.0f) level = 3; else if (v > 4.6f) level = 2;
-    else if (v > 4.2f) level = 1;
-    this->show_battery(level);
+  // Battery: show in deep-sleep mode (on battery), hide on USB
+  if (this->deep_sleep_mode_ && !this->usb_powered_) {
+    this->show_battery(5);  // No usable ADC — show full when on battery
   }
 
   // Fire on_update trigger
@@ -338,20 +327,34 @@ void ShellyHTDisplay::check_and_update_() {
 // ── Lifecycle ───────────────────────────────────────────────────
 
 void ShellyHTDisplay::setup() {
-  // Deep sleep WiFi optimization: skip WiFi on most wake cycles
+  // USB detection via pin (e.g. GPIO19 = USB D+ on Shelly H&T Gen3)
+  if (this->usb_detect_pin_) {
+    this->usb_detect_pin_->setup();
+    this->usb_powered_ = this->usb_detect_pin_->digital_read();
+    ESP_LOGI(TAG, "USB detect pin: %s", this->usb_powered_ ? "HIGH (USB)" : "LOW (battery)");
+
+    if (this->usb_powered_ && this->deep_sleep_mode_) {
+      ESP_LOGI(TAG, "USB detected — switching to always-on mode");
+      this->deep_sleep_mode_ = false;
+#ifdef USE_DEEP_SLEEP
+      if (this->deep_sleep_ != nullptr) {
+        this->deep_sleep_->prevent_deep_sleep();
+      }
+#endif
+    }
+  }
+
+  // Deep sleep WiFi optimization
   if (this->deep_sleep_mode_ && this->wifi_update_every_ > 0) {
     if (this->load_time_from_rtc_()) {
-      // We have saved time from a previous cycle
       rtc_wake_count++;
 
       bool wifi_cycle = (rtc_wake_count % this->wifi_update_every_) == 0;
 
       if (!wifi_cycle) {
-        // Non-WiFi cycle: disable WiFi, calculate time from RTC
         wifi::global_wifi_component->disable();
         this->wifi_skipped_ = true;
 
-        // Advance time by sleep_duration
         int total_min = rtc_saved_hour * 60 + rtc_saved_min +
                         (int)(this->sleep_duration_ms_ / 60000);
         this->rtc_hour_ = (total_min / 60) % 24;
@@ -365,39 +368,19 @@ void ShellyHTDisplay::setup() {
                  rtc_wake_count, this->wifi_update_every_);
       }
     } else {
-      // First boot: no RTC data, WiFi connects normally for initial time sync
       rtc_wake_count = 0;
       ESP_LOGI(TAG, "First boot — WiFi needed for initial time sync");
     }
   }
 
-  ESP_LOGI(TAG, "Shelly H&T display layer ready (%s)",
-           this->deep_sleep_mode_ ? "deep-sleep" : "always-on");
+  ESP_LOGI(TAG, "Shelly H&T display layer ready (%s, usb=%s)",
+           this->deep_sleep_mode_ ? "deep-sleep" : "always-on",
+           this->usb_powered_ ? "yes" : "no");
   this->last_check_ms_ = millis();
 }
 
 void ShellyHTDisplay::loop() {
   if (!this->display_ || !this->display_->is_ready()) return;
-
-  // USB detection: override deep-sleep at runtime
-  if (this->deep_sleep_mode_ && !this->usb_powered_ &&
-      this->batt_sensor_ && this->batt_sensor_->has_state()) {
-    float v = this->batt_sensor_->state;
-    if (v < USB_DETECT_VOLTAGE) {
-      ESP_LOGI(TAG, "USB power detected (battery=%.1fV) — switching to always-on mode", v);
-      this->usb_powered_ = true;
-      this->deep_sleep_mode_ = false;
-      this->wifi_skipped_ = false;  // Re-enable WiFi path
-#ifdef USE_DEEP_SLEEP
-      if (this->deep_sleep_ != nullptr) {
-        this->deep_sleep_->prevent_deep_sleep();
-      }
-#endif
-      // Re-enable WiFi if it was disabled
-      wifi::global_wifi_component->enable();
-      this->force_refresh();
-    }
-  }
 
   uint32_t now = millis();
   if (now - this->last_check_ms_ < this->check_interval_ms_) return;
@@ -409,12 +392,14 @@ void ShellyHTDisplay::loop() {
 void ShellyHTDisplay::dump_config() {
   ESP_LOGCONFIG(TAG, "Shelly H&T Gen3 Display:");
   ESP_LOGCONFIG(TAG, "  Mode: %s", this->deep_sleep_mode_ ? "deep-sleep" : "always-on");
+  ESP_LOGCONFIG(TAG, "  USB powered: %s", this->usb_powered_ ? "yes" : "no");
   ESP_LOGCONFIG(TAG, "  Font: %s", this->font_ == FONT_SIEKOO ? "siekoo" : "classic");
   ESP_LOGCONFIG(TAG, "  Check interval: %ums", this->check_interval_ms_);
   if (this->deep_sleep_mode_) {
     ESP_LOGCONFIG(TAG, "  WiFi update every: %u cycles", this->wifi_update_every_);
     ESP_LOGCONFIG(TAG, "  Sleep duration: %us (for RTC time calc)", this->sleep_duration_ms_ / 1000);
   }
+  LOG_PIN("  USB detect: ", this->usb_detect_pin_);
   ESP_LOGCONFIG(TAG, "  Sensors: temp=%s humi=%s batt=%s wifi=%s time=%s",
     this->temp_sensor_ ? "yes" : "no", this->humi_sensor_ ? "yes" : "no",
     this->batt_sensor_ ? "yes" : "no", this->wifi_sensor_ ? "yes" : "no",

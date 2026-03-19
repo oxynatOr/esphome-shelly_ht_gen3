@@ -3,7 +3,7 @@ import esphome.config_validation as cv
 from esphome.components import sensor, binary_sensor, time as time_comp
 from esphome.const import CONF_ID, CONF_TIME_ID
 from esphome.core import CORE
-from esphome import automation
+from esphome import automation, pins
 
 DEPENDENCIES = ["uc8119"]
 CODEOWNERS = ["@alex"]
@@ -24,6 +24,7 @@ CONF_CHECK_INTERVAL = "check_interval"
 CONF_FONT = "font"
 CONF_ON_UPDATE = "on_update"
 CONF_WIFI_UPDATE_EVERY = "wifi_update_every"
+CONF_USB_DETECT_PIN = "usb_detect_pin"
 
 # Icon binary_sensor overrides
 CONF_FROST_SENSOR = "frost_sensor"
@@ -62,8 +63,10 @@ CONFIG_SCHEMA = (
             # Config
             cv.Optional(CONF_CHECK_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_FONT, default="siekoo"): cv.enum(FONT_OPTIONS, lower=True),
-            # Deep sleep: connect WiFi only every Nth wake cycle (0 = every cycle)
+            # Deep sleep optimization
             cv.Optional(CONF_WIFI_UPDATE_EVERY, default=5): cv.uint32_t,
+            # USB detection pin (HIGH=USB, LOW=battery). On Shelly H&T Gen3: GPIO19 (USB D+)
+            cv.Optional(CONF_USB_DETECT_PIN): pins.gpio_input_pin_schema,
             # Lambda hook
             cv.Optional(CONF_ON_UPDATE): automation.validate_automation(single=True),
         }
@@ -90,9 +93,13 @@ async def to_code(config):
         if CONF_ID in ds_conf:
             ds = await cg.get_variable(ds_conf[CONF_ID])
             cg.add(var.set_deep_sleep_component(ds))
-        # Auto-detect sleep_duration for RTC time calculation
         if "sleep_duration" in ds_conf:
             cg.add(var.set_sleep_duration(ds_conf["sleep_duration"]))
+
+    # USB detect pin
+    if CONF_USB_DETECT_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_USB_DETECT_PIN])
+        cg.add(var.set_usb_detect_pin(pin))
 
     # Analog sensors
     for conf_key, setter in [

@@ -7,6 +7,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/hal.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/time/real_time_clock.h"
@@ -67,6 +68,7 @@ class ShellyHTDisplay : public PollingComponent {
   void set_font(SegmentFont f) { this->font_ = f; }
   void set_wifi_update_every(uint32_t n) { this->wifi_update_every_ = n; }
   void set_sleep_duration(uint32_t ms) { this->sleep_duration_ms_ = ms; }
+  void set_usb_detect_pin(GPIOPin *pin) { this->usb_detect_pin_ = pin; }
 
   // Analog sensor references
   void set_temperature_sensor(sensor::Sensor *s) { this->temp_sensor_ = s; }
@@ -120,6 +122,7 @@ class ShellyHTDisplay : public PollingComponent {
 
   void force_refresh() { this->disp_temp_ = -999; }
   bool is_deep_sleep_mode() const { return this->deep_sleep_mode_; }
+  bool is_usb_powered() const { return this->usb_powered_; }
   bool is_wifi_skipped() const { return this->wifi_skipped_; }
 
  protected:
@@ -130,11 +133,14 @@ class ShellyHTDisplay : public PollingComponent {
   SegmentFont font_{FONT_SIEKOO};
   bool ota_active_{false};
 
+  // USB detection
+  GPIOPin *usb_detect_pin_{nullptr};  // HIGH=USB, LOW=battery (GPIO19 on Shelly)
+
   // Deep sleep WiFi optimization
-  uint32_t wifi_update_every_{5};     // Connect WiFi every Nth wake (0=always)
-  uint32_t sleep_duration_ms_{60000}; // Auto-detected from deep_sleep config
-  bool wifi_skipped_{false};          // True if WiFi was skipped this cycle
-  int rtc_hour_{-1};                  // Calculated time from RTC
+  uint32_t wifi_update_every_{5};
+  uint32_t sleep_duration_ms_{60000};
+  bool wifi_skipped_{false};
+  int rtc_hour_{-1};
   int rtc_min_{-1};
 
   // Analog sensors
@@ -157,7 +163,7 @@ class ShellyHTDisplay : public PollingComponent {
   // on_update trigger
   Trigger<> on_update_trigger_;
 
-  // Display state (what's currently shown)
+  // Display state
   int disp_temp_{-999};
   int disp_humi_{-1};
   int disp_hour_{-1};
