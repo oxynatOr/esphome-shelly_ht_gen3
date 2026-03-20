@@ -7,10 +7,17 @@
 #include <cmath>
 
 // RTC memory for time tracking across deep sleep cycles
+#ifdef USE_ESP32
 static RTC_DATA_ATTR uint32_t rtc_time_magic;
 static RTC_DATA_ATTR int16_t  rtc_saved_hour;
 static RTC_DATA_ATTR int16_t  rtc_saved_min;
 static RTC_DATA_ATTR uint32_t rtc_wake_count;
+#else
+static uint32_t rtc_time_magic;
+static int16_t  rtc_saved_hour;
+static int16_t  rtc_saved_min;
+static uint32_t rtc_wake_count;
+#endif
 static const uint32_t RTC_TIME_MAGIC = 0x54494D45;  // "TIME"
 
 namespace esphome {

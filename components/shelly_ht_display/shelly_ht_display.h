@@ -12,7 +12,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/time/real_time_clock.h"
 #include "../uc8119/uc8119.h"
-#include "../uc8119/siekoo.h"
+#include "siekoo.h"
 
 // Forward declaration
 namespace esphome { namespace deep_sleep { class DeepSleepComponent; } }
