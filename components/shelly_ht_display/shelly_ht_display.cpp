@@ -7,15 +7,13 @@
 // RTC memory for time tracking across deep sleep cycles
 #ifdef USE_ESP32
 static RTC_DATA_ATTR uint32_t rtc_time_magic;
-static RTC_DATA_ATTR int16_t  rtc_saved_hour;
-static RTC_DATA_ATTR int16_t  rtc_saved_min;
+static RTC_DATA_ATTR int32_t  rtc_saved_total_sec;  // seconds since midnight
 static RTC_DATA_ATTR uint32_t rtc_wake_count;
 static RTC_DATA_ATTR int16_t  rtc_saved_temp;   // temp * 10 (e.g. 235 = 23.5C)
 static RTC_DATA_ATTR int16_t  rtc_saved_humi;   // humidity (e.g. 67)
 #else
 static uint32_t rtc_time_magic;
-static int16_t  rtc_saved_hour;
-static int16_t  rtc_saved_min;
+static int32_t  rtc_saved_total_sec;
 static uint32_t rtc_wake_count;
 static int16_t  rtc_saved_temp;
 static int16_t  rtc_saved_humi;
@@ -95,18 +93,20 @@ int ShellyHTDisplay::get_battery_segments() const {
 
 void ShellyHTDisplay::save_time_to_rtc_() {
   if (this->disp_hour_ < 0) return;
-  rtc_saved_hour = this->disp_hour_;
-  rtc_saved_min = this->disp_min_;
+  rtc_saved_total_sec = this->disp_hour_ * 3600 + this->disp_min_ * 60;
   rtc_saved_temp = this->disp_temp_;
   rtc_saved_humi = this->disp_humi_;
   rtc_time_magic = RTC_TIME_MAGIC;
-  ESP_LOGD(TAG, "RTC save %02d:%02d %.1fC %d%%",
-           rtc_saved_hour, rtc_saved_min, rtc_saved_temp / 10.0f, rtc_saved_humi);
+  ESP_LOGD(TAG, "RTC save %02d:%02d (%ds) %.1fC %d%%",
+           this->disp_hour_, this->disp_min_, rtc_saved_total_sec,
+           rtc_saved_temp / 10.0f, rtc_saved_humi);
 }
 
 bool ShellyHTDisplay::load_time_from_rtc_() {
   if (rtc_time_magic != RTC_TIME_MAGIC) return false;
-  ESP_LOGD(TAG, "RTC load %02d:%02d cycle %u", rtc_saved_hour, rtc_saved_min, rtc_wake_count);
+  int h = (rtc_saved_total_sec / 3600) % 24;
+  int m = (rtc_saved_total_sec % 3600) / 60;
+  ESP_LOGD(TAG, "RTC load %02d:%02d (%ds) cycle %u", h, m, rtc_saved_total_sec, rtc_wake_count);
   return true;
 }
 
@@ -418,14 +418,15 @@ void ShellyHTDisplay::setup() {
         wifi::global_wifi_component->disable();
         this->wifi_skipped_ = true;
 
-        int total_min = rtc_saved_hour * 60 + rtc_saved_min +
-                        (int)(this->sleep_duration_ms_ / 60000);
-        this->rtc_hour_ = (total_min / 60) % 24;
-        this->rtc_min_ = total_min % 60;
+        int32_t total_sec = rtc_saved_total_sec + (int32_t)(this->sleep_duration_ms_ / 1000);
+        total_sec = ((total_sec % 86400) + 86400) % 86400;  // wrap at 24h
+        this->rtc_hour_ = (total_sec / 3600) % 24;
+        this->rtc_min_ = (total_sec % 3600) / 60;
 
-        ESP_LOGI(TAG, "No-WiFi wake %u/%u, time %02d:%02d",
+        ESP_LOGI(TAG, "No-WiFi wake %u/%u, time %02d:%02d (+%us)",
                  rtc_wake_count, this->wifi_update_every_,
-                 this->rtc_hour_, this->rtc_min_);
+                 this->rtc_hour_, this->rtc_min_,
+                 this->sleep_duration_ms_ / 1000);
       } else {
         ESP_LOGI(TAG, "WiFi wake %u/%u",
                  rtc_wake_count, this->wifi_update_every_);
