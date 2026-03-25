@@ -447,6 +447,21 @@ void ShellyHTDisplay::setup() {
   ESP_LOGI(TAG, "Ready (%s, power=%s)",
            this->deep_sleep_mode_ ? "deep-sleep" : "always-on",
            this->is_battery_present() ? "battery" : "USB");
+
+  // Register time sync callback — SNTP often syncs after WiFi connects,
+  // which may be after our regular update() cycle. This ensures we catch
+  // the sync, update the display with the correct time, and save to RTC
+  // before deep_sleep kicks in.
+  if (this->time_) {
+    this->time_->add_on_time_sync_callback([this]() {
+      auto now = this->time_->now();
+      if (now.is_valid()) {
+        ESP_LOGI(TAG, "Time synced: %02d:%02d, forcing display update", now.hour, now.minute);
+        this->force_refresh();     // invalidate cache so check_and_update_ writes
+        this->check_and_update_();
+      }
+    });
+  }
 }
 
 void ShellyHTDisplay::update() {
