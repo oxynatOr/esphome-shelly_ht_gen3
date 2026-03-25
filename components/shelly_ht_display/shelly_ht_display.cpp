@@ -38,9 +38,6 @@ void ShellyHTDisplay::read_battery_() {
   if (this->ext_power_sensor_) this->ext_power_sensor_->publish_state(!present);
 
   if (!present || !this->batt_adc_ || !this->batt_power_en_) {
-    if (!present) ESP_LOGD(TAG, "Battery: USB mode, skipping ADC");
-    if (this->batt_voltage_sensor_) this->batt_voltage_sensor_->publish_state(NAN);
-    if (this->batt_percent_sensor_) this->batt_percent_sensor_->publish_state(NAN);
     return;
   }
 
