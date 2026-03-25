@@ -3,10 +3,10 @@ import esphome.config_validation as cv
 from esphome.components import sensor, binary_sensor, time as time_comp
 from esphome.const import CONF_ID, CONF_TIME_ID
 from esphome.core import CORE
-from esphome import automation
+from esphome import automation, pins
 
 DEPENDENCIES = ["uc8119"]
-CODEOWNERS = ["@oxynatOr"]
+CODEOWNERS = ["@alex"]
 
 uc8119_ns = cg.esphome_ns.namespace("uc8119")
 UC8119 = uc8119_ns.class_("UC8119")
