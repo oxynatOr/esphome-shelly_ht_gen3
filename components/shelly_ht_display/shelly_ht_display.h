@@ -22,7 +22,7 @@
 #include "siekoo.h"
 
 namespace esphome {
-namespace shelly_ht_gen3 {
+namespace shelly_htg3 {
 
 enum SegmentFont : uint8_t {
   FONT_SIEKOO = 0,   // Siekoo by Alexander Fakoo — confusion-free (default)

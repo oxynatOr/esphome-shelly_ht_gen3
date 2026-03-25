@@ -3,11 +3,20 @@
 #include "esphome/components/wifi/wifi_component.h"
 
 #include "driver/gpio.h"
-#include "esp_adc/adc_oneshot.h"
-#include "esp_adc/adc_cali.h"
-#include "esp_adc/adc_cali_scheme.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_idf_version.h"
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #include "esp_adc/adc_oneshot.h"
+  #include "esp_adc/adc_cali.h"
+  #include "esp_adc/adc_cali_scheme.h"
+  #define HTG3_ADC_V5
+#else
+  #include "driver/adc.h"
+  #include "esp_adc_cal.h"
+  #define HTG3_ADC_V4
+#endif
 
 #include <cmath>
 
@@ -56,7 +65,8 @@ void ShellyHTDisplay::setup_battery_() {
   bp.intr_type = GPIO_INTR_DISABLE;
   gpio_config(&bp);
 
-  // ADC1 oneshot
+  // ADC init (ESP-IDF version dependent)
+#ifdef HTG3_ADC_V5
   adc_oneshot_unit_init_cfg_t ucfg = {};
   ucfg.unit_id = ADC_UNIT_1;
   ucfg.ulp_mode = ADC_ULP_MODE_DISABLE;
@@ -76,7 +86,6 @@ void ShellyHTDisplay::setup_battery_() {
     return;
   }
 
-  // Calibration (curve fitting, ESP32-C3)
   adc_cali_curve_fitting_config_t cal = {};
   cal.unit_id = ADC_UNIT_1;
   cal.chan = (adc_channel_t) this->batt_adc_pin_;
@@ -87,8 +96,18 @@ void ShellyHTDisplay::setup_battery_() {
   if (adc_cali_create_scheme_curve_fitting(&cal, &cali) == ESP_OK) {
     this->cali_handle_ = cali;
   } else {
-    ESP_LOGW(TAG, "Battery ADC calibration unavailable, using raw values");
+    ESP_LOGW(TAG, "Battery ADC calibration unavailable");
   }
+
+#else  // HTG3_ADC_V4 (ESP-IDF < 5.0)
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten((adc1_channel_t) this->batt_adc_pin_, ADC_ATTEN_DB_12);
+
+  auto *chars = new esp_adc_cal_characteristics_t;
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 0, chars);
+  this->cali_handle_ = chars;
+  this->adc_handle_ = (void *) 1;  // non-null = initialized
+#endif
 
   this->batt_available_ = true;
   ESP_LOGI(TAG, "Battery: ADC=GPIO%d presence=GPIO%d power_en=GPIO%d div=%.3f range=%.1f-%.1fV",
@@ -100,9 +119,6 @@ void ShellyHTDisplay::setup_battery_() {
 
 void ShellyHTDisplay::read_battery_() {
   if (!this->batt_available_) return;
-
-  auto adc = (adc_oneshot_unit_handle_t) this->adc_handle_;
-  auto cali = (adc_cali_handle_t) this->cali_handle_;
 
   // Presence check
   bool present = gpio_get_level((gpio_num_t) this->batt_presence_pin_) == 1;
@@ -116,7 +132,7 @@ void ShellyHTDisplay::read_battery_() {
     return;
   }
 
-  if (!adc) return;
+  if (!this->adc_handle_) return;
 
   // 1) Power enable HIGH
   gpio_set_level((gpio_num_t) this->batt_power_en_pin_, 1);
@@ -126,11 +142,16 @@ void ShellyHTDisplay::read_battery_() {
   int32_t sum = 0;
   int ok = 0;
   for (int i = 0; i < this->batt_samples_; i++) {
-    int raw;
+    int raw = -1;
+#ifdef HTG3_ADC_V5
+    auto adc = (adc_oneshot_unit_handle_t) this->adc_handle_;
     if (adc_oneshot_read(adc, (adc_channel_t) this->batt_adc_pin_, &raw) == ESP_OK) {
-      sum += raw;
-      ok++;
+      sum += raw; ok++;
     }
+#else
+    raw = adc1_get_raw((adc1_channel_t) this->batt_adc_pin_);
+    if (raw >= 0) { sum += raw; ok++; }
+#endif
   }
 
   // 3) Power enable LOW
@@ -145,6 +166,8 @@ void ShellyHTDisplay::read_battery_() {
 
   // 4) Calibrated voltage
   float v_adc;
+#ifdef HTG3_ADC_V5
+  auto cali = (adc_cali_handle_t) this->cali_handle_;
   if (cali) {
     int mv;
     adc_cali_raw_to_voltage(cali, avg, &mv);
@@ -152,6 +175,15 @@ void ShellyHTDisplay::read_battery_() {
   } else {
     v_adc = avg / 4095.0f * 3.1f;
   }
+#else
+  auto *chars = (esp_adc_cal_characteristics_t *) this->cali_handle_;
+  if (chars) {
+    uint32_t mv = esp_adc_cal_raw_to_voltage(avg, chars);
+    v_adc = mv / 1000.0f;
+  } else {
+    v_adc = avg / 4095.0f * 3.1f;
+  }
+#endif
 
   // 5) Battery voltage + percentage
   float v_bat = v_adc * this->batt_divider_;
