@@ -260,8 +260,8 @@ void ShellyHTDisplay::show_ota_progress(float progress) {
   if (!this->ota_active_) return;
   uint8_t h1 = S7_BLANK, h2 = S7_BLANK;
   if (progress >= 100.0f)     { h2 = SEG7_ASTERISK; }
-  else if (progress >= 80.0f) { h2 = SEG7_EQUAL; }
-  else if (progress >= 60.0f) { h2 = SEG7_COLON; }
+  else if (progress >= 80.0f) { h2 = SEG7_COLON; }
+  else if (progress >= 60.0f) { h2 = SEG7_EQUAL; }
   else if (progress >= 40.0f) { h2 = SEG7_MINUS; }
   else if (progress >= 20.0f) { h2 = SEG7_DOT; }
   else                        { h2 = S7_BLANK; }
@@ -272,9 +272,10 @@ void ShellyHTDisplay::show_ota_progress(float progress) {
 
 void ShellyHTDisplay::show_ota_end() {
   this->display_->clear();
+  this->show_text_big("Cya");  
   this->show_text_clock("donE");
-  this->write_digit_(DIG_H1, SEG7_LPAREN);
-  this->write_digit_(DIG_H2, SEG7_RPAREN);
+  this->write_digit_(DIG_H1, S7_BLANK);
+  this->write_digit_(DIG_H2, S7_BLANK);
   this->display_->commit();
   ESP_LOGI(TAG, "OTA complete");
 }
