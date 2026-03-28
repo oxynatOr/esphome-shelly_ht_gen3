@@ -75,8 +75,10 @@ Requires a custom ESPHome external component for the UC8119 display — the firs
 ### Flashing
 
 > **Note:** OTA flashing from the original Shelly firmware is **not possible**.
-> Shelly Gen3+ (Firmware v1.5+) verifies OTA images with an ECDSA signature using their private key.
+> Shelly Gen3+ (Firmware v1.7+) verifies OTA images with an ECDSA signature using their private key.
 > The device must be flashed via UART.
+
+
 
 To enter download mode, hold **IO9** low (connect to GND) while powering on the device. Release after boot.
 
@@ -162,16 +164,21 @@ esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 460800 \
 ## Notes
 - The display layer reads sensor values from RAM (no I2C), so sensor reads and display writes never collide on the shared I2C bus.
 - Button actions: short press = force refresh, double click = ghost clear, long press (3s) = reboot. In Deep-Sleep it acts as the Wake-Up-Button.
-- Font selection: `siekoo` (default, confusion-free) or `classic` (traditional 7-segment).
+- Font selection: `siekoo` (default, confusion-free), `seg7alpha` (AI generated confusion-free) or `classic` (traditional 7-segment).
 
+- The Siekoo 7-segment alphabet was created by [Alexander Fakoó](https://fakoo.de/).
+  It provides a confusion-free character set where every letter is visually distinct from every digit. No more mixing up 0/O, 1/I, 5/S, or 2/Z. 
+
+<br><br>
+
+> <h3>Alexander graciously agreed to release the Siekoo alphabet under the MIT license for use in this project.</h3>
+> <h4>Thank you for your work and your openness to the open-source community!<h4>
+
+<br><br>
 <!-- LICENSE -->
 ## License
 
 MIT for all code (driver, display layer, examples, tools).
-
-**Exception**: The Siekoo font files (siekoo.h) are licensed under CC BY-NC-ND by Alexander Fakoó. They are optional — set font: classic or remove the files to avoid the CC restriction. See LICENSE for details.
-
-
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
