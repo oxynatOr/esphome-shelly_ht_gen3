@@ -92,6 +92,9 @@ class ShellyHTDisplay : public PollingComponent {
   void set_display(uc8119::UC8119 *d) { this->display_ = d; }
   void set_deep_sleep_mode(bool v) { this->deep_sleep_mode_ = v; }
   void set_font(SegmentFont f) { this->font_ = f; }
+  void set_temperature_unit(TemperatureUnit u) { this->temp_unit_ = u; }
+  void set_time_format(TimeFormat f) { this->time_format_ = f; }
+  void set_am_pm_indicator(AmPmIndicator i) { this->am_pm_indicator_ = i; }  
   void set_wifi_update_every(uint32_t n) { this->wifi_update_every_ = n; }
 
   // ── Input sensor references ───────────────────────────────────
