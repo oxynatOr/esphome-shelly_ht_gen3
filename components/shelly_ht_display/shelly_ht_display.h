@@ -227,6 +227,7 @@ class ShellyHTDisplay : public PollingComponent {
   bool disp_heating_{false};
   bool disp_vent_{false};
   bool disp_bt_{false};
+  bool disp_globe_{false};
   bool disp_calendar_{false};
   bool disp_arrow_{false};
 

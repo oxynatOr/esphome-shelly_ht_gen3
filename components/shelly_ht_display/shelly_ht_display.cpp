@@ -103,8 +103,8 @@ void ShellyHTDisplay::save_state_to_rtc_() {
 
 bool ShellyHTDisplay::has_cached_state_() {
   if (rtc_state_magic != RTC_STATE_MAGIC) return false;
-  ESP_LOGD(TAG, "RTC load: %.1fC %d%% cycle %u",
-           rtc_saved_temp / 10.0f, rtc_saved_humi, rtc_wake_count);
+  ESP_LOGD(TAG, "RTC load: %.1fC %d%% cycle %lu",
+           rtc_saved_temp / 10.0f, rtc_saved_humi, (unsigned long) rtc_wake_count);
   return true;
 }
 
@@ -175,7 +175,10 @@ bool ShellyHTDisplay::get_icon_state_(binary_sensor::BinarySensor *ext, bool def
 
 void ShellyHTDisplay::show_temperature(float t, bool f) {
   float v = f ? t * 9.0f / 5.0f + 32.0f : t;
-  bool neg = v < 0; float a = std::abs(v); if (a > 99.9f) a = 99.9f;
+  bool neg = v < 0; float a = std::abs(v);
+  // Negative values only have 2 digits (sign occupies the tens digit)
+  float max_abs = neg ? 9.9f : 99.9f;
+  if (a > max_abs) a = max_abs;
   int val = (int)roundf(a * 10.0f);
   int tens = val / 100, ones = (val / 10) % 10, dec = val % 10;
 
@@ -191,7 +194,8 @@ void ShellyHTDisplay::show_temperature(float t, bool f) {
 }
 
 void ShellyHTDisplay::show_humidity(int h) {
-  if (h < 0) h = 0; if (h > 99) h = 99;
+  if (h < 0) h = 0;
+  if (h > 99) h = 99;
   this->write_digit_(DIG_H1, h / 10 > 0 ? S7_NUM[h / 10] : S7_BLANK);
   this->write_number_(DIG_H2, h % 10);
   this->show_percent(true);
@@ -241,14 +245,20 @@ void ShellyHTDisplay::show_time(int h, int m) {
 
 void ShellyHTDisplay::show_text_big(const char *t) {
   const DigitMap *d[] = {&DIG_D1, &DIG_D2, &DIG_D3};
-  for (int i = 0; i < 3; i++)
-    this->write_digit_(*d[i], this->char_to_seg7_((t && t[i]) ? t[i] : ' '));
+  bool end = (t == nullptr);  // never read past the NUL terminator
+  for (int i = 0; i < 3; i++) {
+    if (!end && t[i] == '\0') end = true;
+    this->write_digit_(*d[i], this->char_to_seg7_(end ? ' ' : t[i]));
+  }
 }
 
 void ShellyHTDisplay::show_text_clock(const char *t) {
   const DigitMap *d[] = {&DIG_T1, &DIG_T2, &DIG_T3, &DIG_T4};
-  for (int i = 0; i < 4; i++)
-    this->write_digit_(*d[i], this->char_to_seg7_((t && t[i]) ? t[i] : ' '));
+  bool end = (t == nullptr);
+  for (int i = 0; i < 4; i++) {
+    if (!end && t[i] == '\0') end = true;
+    this->write_digit_(*d[i], this->char_to_seg7_(end ? ' ' : t[i]));
+  }
 }
 
 // ── Icons ──────────────────────────────────────────────────────
@@ -339,9 +349,12 @@ void ShellyHTDisplay::check_and_update_() {
   int new_temp, new_humi;
   float raw_temp;
 
+  if (has_t && has_h && (std::isnan(this->temp_sensor_->state) || std::isnan(this->humi_sensor_->state)))
+    return;  // (int)NaN is undefined behaviour
+
   if (has_t && has_h) {
     new_temp = (int)roundf(this->temp_sensor_->state * 10.0f);
-    new_humi = (int)this->humi_sensor_->state;
+    new_humi = (int)roundf(this->humi_sensor_->state);
     raw_temp = this->temp_sensor_->state;
   } else if (this->wifi_skipped_ && rtc_state_magic == RTC_STATE_MAGIC) {
     new_temp = rtc_saved_temp;
@@ -365,7 +378,7 @@ void ShellyHTDisplay::check_and_update_() {
       if (rssi > -50) new_bars = 4; else if (rssi > -65) new_bars = 3;
       else if (rssi > -75) new_bars = 2; else if (rssi > -85) new_bars = 1;
     }
-    new_wifi = wifi::global_wifi_component->is_connected();
+    new_wifi = wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
   }
 
   // Icon states
@@ -390,6 +403,7 @@ void ShellyHTDisplay::check_and_update_() {
                  (new_heating  != this->disp_heating_)  ||
                  (new_vent     != this->disp_vent_)     ||
                  (new_bt       != this->disp_bt_)       ||
+                 (new_globe    != this->disp_globe_)    ||
                  (new_calendar != this->disp_calendar_) ||
                  (new_arrow    != this->disp_arrow_);
 
@@ -404,6 +418,7 @@ void ShellyHTDisplay::check_and_update_() {
   this->disp_bars_ = new_bars;       this->disp_wifi_ = new_wifi;
   this->disp_frost_ = new_frost;     this->disp_heating_ = new_heating;
   this->disp_vent_ = new_vent;       this->disp_bt_ = new_bt;
+  this->disp_globe_ = new_globe;
   this->disp_calendar_ = new_calendar; this->disp_arrow_ = new_arrow;
 
   // Cache sensor data to RTC for fast non-WiFi wakes
@@ -486,14 +501,14 @@ void ShellyHTDisplay::setup() {
       rtc_wake_count++;
       bool wifi_cycle = gpio_wake || (rtc_wake_count % this->wifi_update_every_) == 0;
 
-      if (!wifi_cycle) {
+      if (!wifi_cycle && wifi::global_wifi_component != nullptr) {
         wifi::global_wifi_component->disable();
         this->wifi_skipped_ = true;
-        ESP_LOGI(TAG, "No-WiFi wake %u/%u, clock %02d:%02d",
-                 rtc_wake_count, this->wifi_update_every_, h, m);
+        ESP_LOGI(TAG, "No-WiFi wake %lu/%lu, clock %02d:%02d",
+                 (unsigned long) rtc_wake_count, (unsigned long) this->wifi_update_every_, h, m);
       } else {
-        ESP_LOGI(TAG, "WiFi wake %u/%u%s",
-                 rtc_wake_count, this->wifi_update_every_,
+        ESP_LOGI(TAG, "WiFi wake %lu/%lu%s",
+                 (unsigned long) rtc_wake_count, (unsigned long) this->wifi_update_every_,
                  gpio_wake ? " (button)" : " (SNTP re-sync)");
       }
     } else {
@@ -537,19 +552,19 @@ void ShellyHTDisplay::dump_config() {
                 "Shelly H&T Gen3:\n"
                 "  Mode: %s\n"
                 "  Font: %s\n"
-                "  Update interval: %ums\n"
+                "  Update interval: %lums\n"
                 "  Sensors: temp=%s humi=%s wifi=%s time=%s",
                 this->deep_sleep_mode_ ? "deep-sleep" : "always-on",
                 this->font_ == FONT_SEG7 ? "seg7alpha" : "classic",
-                this->get_update_interval(),
+                (unsigned long) this->get_update_interval(),
                 this->temp_sensor_ ? "yes" : "no",
                 this->humi_sensor_ ? "yes" : "no",
                 this->wifi_sensor_ ? "yes" : "no",
                 this->time_ ? "yes" : "no");
   if (this->deep_sleep_mode_) {
     ESP_LOGCONFIG(TAG,
-                  "  WiFi every: %u cycles",
-                  this->wifi_update_every_);
+                  "  WiFi every: %lu cycles",
+                  (unsigned long) this->wifi_update_every_);
   }
   ESP_LOGCONFIG(TAG,
                 "  Battery: adc=%s presence=%s power_en=%s\n"

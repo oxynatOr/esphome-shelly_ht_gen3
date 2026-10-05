@@ -86,7 +86,30 @@ Battery-powered WiFi temperature & humidity sensor with a segment E-Paper displa
 | 6 | VCC 3V3 |
 | 7 | BOOT / GPIO9 |
 
----
+#### OTA from the Shelly stock firmware
+
+Flashing over the air is possible with the [**ShellyOTA**](https://github.com/oxynatOr/free-shelly-ota) script.
+
+- Tested against stock firmware **2.0.1**.
+- The **battery must be at least 35 %**, otherwise the update is refused.
+- The build must use the stock partition table so the image fits the layout on the device. Copy [`docu/csv/HTG3-stock.csv`](docu/csv/HTG3-stock.csv) next to your YAML and set:
+
+```yaml
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: ESP32C3
+  flash_size: 8MB
+  partitions: csv/HTG3-stock.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_PARTITION_TABLE_OFFSET: "0xf000"
+```
+
+The partition table is at `0xf000` on this device (Plug M Gen3: `0x10000`). The table in flash stays Shelly's; the CSV only makes ESPHome build against the same layout.
+
+#### Flashing via UART
 
 ## 🚀 Flashing
 
