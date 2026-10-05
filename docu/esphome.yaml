@@ -20,11 +20,13 @@ esp32:
   board: esp32-c3-devkitm-1
   variant: ESP32C3
   flash_size: 8MB
+  partitions: csv/HTG3-stock.csv   # Shelly stock layout, needed for OTA from stock firmware
   framework:
     type: esp-idf
     version: recommended
     sdkconfig_options:
       COMPILER_OPTIMIZATION_SIZE: y
+      CONFIG_PARTITION_TABLE_OFFSET: "0xf000"   # stock table sits at 0xf000
     advanced:
       enable_ota_rollback: false
 

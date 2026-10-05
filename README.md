@@ -74,9 +74,30 @@ Requires a custom ESPHome external component for the UC8119 display — the firs
 
 ### Flashing
 
-> **Note:** OTA flashing from the original Shelly firmware is **not possible**.
-> Shelly Gen3+ (Firmware v1.7+) verifies OTA images with an ECDSA signature using their private key.
-> The device must be flashed via UART.
+#### OTA from the Shelly stock firmware
+
+Flashing over the air is possible with the **ShellyOTA** script (currently private, will be published later).
+
+- Tested against stock firmware **2.0.1** and **2.0.2**.
+- The **battery must be at least 35 %**, otherwise the update is refused.
+- The build must use the stock partition table so the image fits the layout on the device. Copy [`docu/csv/HTG3-stock.csv`](docu/csv/HTG3-stock.csv) next to your YAML and set:
+
+```yaml
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: ESP32C3
+  flash_size: 8MB
+  partitions: csv/HTG3-stock.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_PARTITION_TABLE_OFFSET: "0xf000"
+```
+
+The partition table is at `0xf000` on this device (Plug M Gen3: `0x10000`). The table in flash stays Shelly's; the CSV only makes ESPHome build against the same layout.
+
+#### Flashing via UART
 
 
 
